@@ -1,0 +1,342 @@
+---
+title: "Assignment 7 -- Corporate Bankruptcy Prediction Using Logistic Regression"
+author: "Name: Haoyang Yu"
+date: "Due by 11/10/2023"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# path<- "/Users/Shaobo Li/Dropbox/Teaching/KU/Data"
+# knitr::opts_knit$set(root.dir = path)
+```
+
+## Instruction
+Load the Bankruptcy dataset into R and conduct a predictive analysis following the steps below.
+```{r}
+bankruptcy <- read.csv("https://shaobo-li.github.io/Teaching/Data/bankruptcy.csv")
+
+```
+
+The variable description is as following:
+* FYEAR: Fiscal year (do not include in the model);
+* CUSIP: Company identity code (do not include in the model);
+* DLRSN: The indicator for bankruptcy: 1=bankruptcy; 0=non-bankruptcy (this is the dependent variable);
+*	R1: Working Capital/Total Asset;
+*	R2: Retained Earning/Total Asset;
+*	R3: Earning Before Interest & Tax/Total Asset;
+*	R4: Market Capital/Total Liability;
+*	R5: SALE/Total Asset;
+*	R6: Total Liability/Total Asset
+*	R7: Current Asset/Current Liability;
+*	R8: Net Income/Total Asset;
+*	R9: log(SALE);
+*	R10: log(Market Cap)
+
+#### 1. How does the bankruptcy rate changes over years? Draw an appropriate plot (or table) to show this.
+
+```{r}
+library(tidyverse)
+library(broom)
+library(caret)
+library(ROCR)
+
+# # Calculate bankruptcy rate by year
+# bankruptcy_rate_by_year <- bankruptcy %>%
+#   group_by(FYEAR) %>%
+#   summarize(BankruptcyRate = mean(DLRSN))
+# 
+# # Plot the bankruptcy rate over years
+# ggplot(bankruptcy_rate_by_year, aes(x = FYEAR, y = BankruptcyRate)) +
+#   geom_line() +  # Change to geom_bar() if you prefer a bar chart
+#   labs(title = "Bankruptcy Rate Over Years",
+#        x = "Fiscal Year",
+#        y = "Bankruptcy Rate") +
+#   theme_minimal()
+
+```
+
+
+#### 2. Fit a logistic regression to explain and predict bankruptcy (DLRSN) with all predictors (R1-R10) based on the full sample. Then answer the following questions.
+
+```{r}
+# Remove 'FYEAR' and 'CUSIP'
+bankruptcy_data <- bankruptcy %>% select(-FYEAR, -CUSIP)
+
+# Fit logistic regression model
+ml_logistic <- glm(DLRSN ~ ., data = bankruptcy_data, family = "binomial")
+
+# Get a tidy summary of the model to see coefficients and significance
+#logistic_summary <- summary(ml_logistic)
+AIC(ml_logistic)
+BIC(ml_logistic)
+tidy_logistic <- tidy(ml_logistic)
+print(tidy_logistic)
+
+# Calculate predicted probabilities
+bankruptcy_data$predicted_prob <- predict(ml_logistic, type = "response")
+
+# Evaluate the distribution of predicted probabilities
+prob_distribution <- summary(bankruptcy_data$predicted_prob)
+print(prob_distribution)
+hist(bankruptcy_data$predicted_prob, breaks = 50, main = "Histogram of Predicted Bankruptcy Probabilities", xlab = "Predicted Probability of Bankruptcy")
+
+### ROC and AUC 
+# Create a prediction object
+pred <- prediction(bankruptcy_data$predicted_prob, bankruptcy_data$DLRSN)
+
+# Calculate performance
+perf <- performance(pred, "tpr", "fpr")
+
+# Plot the ROC curve
+plot(perf, colorize = TRUE, main = "ROC Curve")
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+# Use the overall bankruptcy rate as the cut-off
+overall_rate <- mean(bankruptcy_data$DLRSN)
+predicted_class <- ifelse(bankruptcy_data$predicted_prob > overall_rate, 1, 0)
+# Calculate the overall (equal-weighted) misclassification rate
+MR <- mean(bankruptcy_data$DLRSN != predicted_class)
+# Calculate the True Positive Rate
+TPR <- sum(bankruptcy_data$DLRSN == 1 & predicted_class == 1) / sum(bankruptcy_data$DLRSN == 1)
+# Calculate the False Negative Rate
+FNR <- sum(bankruptcy_data$DLRSN == 1 & predicted_class == 0) / sum(bankruptcy_data$DLRSN == 1)
+
+# Print the rates
+cat("Misclassification Rate (MR):", MR, "\n")
+cat("True Positive Rate (TPR):", TPR, "\n")
+cat("False Negative Rate (FNR):", FNR, "\n")
+
+### total costs 
+# Weights (costs) for False Positives (FP) and False Negatives (FN)
+w.FP <- 1000000   # Cost for each False Positive ($1M)
+w.FN <- 10000000  # Cost for each False Negative (10 times the cost of FP, so $10M)
+
+obs <- bankruptcy_data$DLRSN
+
+num_FP <- sum(obs == 0 & predicted_class == 1)
+num_FN <- sum(obs == 1 & predicted_class == 0)
+
+total_cost <- num_FP * w.FP + num_FN * w.FN
+
+total_cost
+
+```
+
+(a) Are there any insignificant variables?
+R4: Not significant (p = 0.11841)
+R5: Not significant (p = 0.89758)
+
+(b) How does Total Liability/Total Asset affect bankruptcy?
+R6's coefficient is 0.253011, and statistically significant.  
+For every one-unit increase in the ratio of Total Liability to Total Asset, the log odds of bankruptcy are expected to increase by 0.253011, holding all other variables constant.This suggests that as the proportion of liabilities to assets increases, a company's risk of bankruptcy increases
+
+(c) Obtain the value of residual deviance, AIC and BIC.
+
+Residual deviance is 3005.1; 
+AIC is 3027.109
+BIC is 3099.718
+
+(d) Obtain the predicted bankruptcy probability. How is it distributed?
+
+
+(e) Draw the ROC curve and obtain the AUC for this model.
+AUC is 0.878637
+(f) Using the overall bankruptcy rate as the cut-off, calculate MR, TPR, and FNR.
+
+(g) If the cost for FN is 10 times the cost of FP ($1M). What is the total cost?
+2.49e+09
+
+
+#### 3. Use stepwise variable selection method (based on BIC) to update your model. Then answer the following questions.
+
+```{r}
+library(glmnet)
+
+null_model <- glm(DLRSN~1, family = binomial, data = bankruptcy_data)
+full_model <- glm(DLRSN ~ .,family = binomial, data = bankruptcy_data)
+
+# Perform stepwise variable selection based on BIC
+stepwise_model <- step(null_model, scope = list(lower = null_model, upper = full_model),direction = "both", k = log(nrow(bankruptcy_data)), trace = 0)
+
+# Summary of the stepwise selected model
+summary(stepwise_model)
+
+# Obtain the summary of the stepwise model to get the residual deviance, AIC and BIC
+stepwise_model$deviance
+AIC(stepwise_model)
+BIC(stepwise_model)
+
+
+## ROC and AUC
+bankruptcy_predictions <- predict(stepwise_model, newdata = bankruptcy_data, type = "response")
+pred <- prediction(bankruptcy_predictions, bankruptcy_data$DLRSN)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize = TRUE, main = "ROC Curve")
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+
+
+### Calculate all the rates 
+overall_bankruptcy_rate <- mean(bankruptcy_data$DLRSN)
+predicted_classes_step <- ifelse(bankruptcy_predictions > overall_bankruptcy_rate, 1, 0)
+
+MR_step <- mean(predicted_classes_step != bankruptcy_data$DLRSN)
+
+TPR_step <- sum(predicted_classes_step == 1 & bankruptcy_data$DLRSN == 1) / sum(bankruptcy_data$DLRSN == 1)
+
+FNR_step <- sum(predicted_classes_step == 0 & bankruptcy_data$DLRSN == 1) / sum(bankruptcy_data$DLRSN == 1)
+
+print(paste("Misclassification Rate:", MR_step))
+print(paste("True Positive Rate:", TPR_step))
+print(paste("False Negative Rate:", FNR_step))
+
+###Total Cost 
+cutoff <- mean(bankruptcy_data$DLRSN)
+
+predicted_classes <- ifelse(bankruptcy_predictions > cutoff, 1, 0)
+
+cost_FP <- 1000000  
+cost_FN <- 10000000 
+
+# Number of false positives and false negatives
+FP <- sum(predicted_classes == 1 & bankruptcy_data$DLRSN == 0)
+FN <- sum(predicted_classes == 0 & bankruptcy_data$DLRSN == 1)
+
+# Total cost
+total_cost <- FP * cost_FP + FN * cost_FN
+
+print(paste("Total Cost: $", total_cost))
+
+
+```
+
+(a) Obtain the value of residual deviance, AIC and BIC.
+
+(b) Draw the ROC curve and obtain the AUC for this model.
+
+(c) Using the overall bankruptcy rate as the cut-off, calculate MR, TPR, and FNR.
+
+(d) If the cost for FN is 10 times the cost of FP ($1M). What is the total cost?
+
+
+#### 4. For each of the above model, use the asymmetric cost to determine the optimal cut-off probability, respectively. Then calculate MR, TPR, and FNR.
+
+```{r}
+### initial logtistic model 
+# Define costs for False Positives (FP) and False Negatives (FN)
+w.FP <- 1000000  
+w.FN <- 10 * w.FP  
+
+# Observed outcomes
+obs <- bankruptcy_data$DLRSN
+
+# Predicted probabilities
+pred.p <- bankruptcy_data$predicted_prob
+
+# Initialize a sequence of potential cutoffs
+p.seq <- seq(0.01, 1, by = 0.01)
+
+# Initialize a vector to store costs for each cutoff value
+cost <- numeric(length(p.seq))
+
+# Loop through each cutoff value to calculate total cost
+for (i in seq_along(p.seq)) {
+    pcut <- p.seq[i]
+    pred.class <- ifelse(pred.p > pcut, 1, 0)
+    cost[i] <- sum((obs == 0 & pred.class == 1) * w.FP) + sum((obs == 1 & pred.class == 0) * w.FN)
+}
+
+# Find the optimal cutoff value
+optimal_cutoff <- p.seq[which.min(cost)]
+
+# Classify using the optimal cutoff
+predicted_classes <- ifelse(pred.p > optimal_cutoff, 1, 0)
+
+# Calculate MR, TPR, and FNR
+# Calculate MR, TPR, and FNR using predicted_classes
+MR <- mean(pred.class != obs)
+TPR <- sum(predicted_classes == 1 & obs == 1) / sum(obs == 1)
+FNR <- sum(predicted_classes == 0 & obs == 1) / sum(obs == 1)
+
+
+# Print results
+print(paste("Optimal Cutoff of logistic regression with all predictors:", optimal_cutoff))
+print(paste("Misclassification Rate of logistic regression with all predictors and optimal cutoff:", MR))
+print(paste("True Positive Rate of logistic regression with all predictors and optimal cutoff:", TPR))
+print(paste("False Negative Rate of logistic regression with all predictors and optimal cutoff:", FNR))
+
+
+###Stepwide Model 
+w.FP <- 1000000
+w.FN <- 10*w.FP
+obs <- bankruptcy_data$DLRSN
+pred.p <- predict(stepwise_model, newdata = bankruptcy_data, type = "response")
+p.seq <- seq(0.01, 1, 0.01) 
+cost <- rep(NA, length(p.seq))
+for(i in 1:length(p.seq)){
+  pcut <- p.seq[i]
+  pred.class <- (pred.p > pcut)*1
+  # finally calculate the cost
+  cost[i] <- sum((obs==0 & pred.class==1)*w.FP+(obs==1 & pred.class==0)*w.FN)
+  
+}
+plot(p.seq,cost) ##minimize the cost
+
+#locate the optimal cutoff 
+p.seq[which.min(cost)]
+
+# Now calculate all the rates 
+optimal_cutoff <- 0.09
+predicted_classes <- ifelse(pred.p > optimal_cutoff, 1, 0)
+MR <- mean(predicted_classes != obs)
+TPR <- sum(predicted_classes == 1 & obs == 1) / sum(obs == 1)
+FNR <- sum(predicted_classes == 0 & obs == 1) / sum(obs == 1)
+
+print(paste("Misclassification Rate of stepwise model with optimal cutoff:", MR))
+print(paste("True Positive Rate of stepwise model with optimal cutoff:", TPR))
+print(paste("False Negative Rate of stepwise model with optimal cutoff:", FNR))
+
+```
+
+
+#### 5. Conduct 10-fold cross validation (using AUC as the cv score) for these two models. Which model is better?
+
+```{r}
+bankruptcy_data <- bankruptcy_data %>%
+  mutate(DLRSN = as.factor(recode(DLRSN, `1` = "Yes", `0` = "No")))
+fit_control <- trainControl(method = "cv", number = 10, 
+                            summaryFunction = twoClassSummary, 
+                            classProbs = TRUE, 
+                            savePredictions = "final")
+
+# Perform cross-validation
+cv_model1 <- train(form = as.formula(ml_logistic$call), 
+                   data = bankruptcy_data, 
+                   method = "glm", 
+                   family = "binomial", 
+                   trControl = fit_control, 
+                   metric = "ROC")
+
+
+cv_model2 <- train(form = as.formula(stepwise_model$call), 
+                   data = bankruptcy_data, 
+                   method = "glm", 
+                   family = "binomial", 
+                   trControl = fit_control, 
+                   metric = "ROC")
+auc_model1 <- cv_model1$results$ROC
+auc_model2 <- cv_model2$results$ROC
+
+print(paste("AUC for ml_logistic model:", auc_model1))
+print(paste("AUC for stepwise model:", auc_model2))
+
+```
+
+
+
+

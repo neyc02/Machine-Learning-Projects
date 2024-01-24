@@ -1,0 +1,308 @@
+---
+title: "k_means_clustering"
+author: "Haoyang"
+date: "2023-09-18"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tinytex)
+```
+
+```{r}
+#### HW3 k-means clustering 
+#### The goal of this algorithm is to minimize variance within clusters 
+#### and maximize variance between clusters
+#### the best model is one with the minimum total within-group sum squared error
+
+#### Question 1: How do the within-group sum squared error change over iterations? 
+#### Draw plots  
+### within-group sum squared error (WSSE) will get smaller after iteration 
+### total sum sqaured error (SST) for the entire sample does not change 
+
+
+####  Step 0: define function and scale the data points
+### define the calculation of sum square error (SSE) 
+
+SSE <- function(data, center) {
+  n <- nrow(data)
+  se_i <- sapply(1:n, function(i) sum((data[i,] - center)^2))
+  sum(se_i)
+}
+
+ 
+# scale function: why standardize the data? to rescale the variables 
+# Because the scale of variables can influence the results. 
+# Standardizing variables helps to prevent variables with larger scales from dominating analyses.
+# This function is to Scale data to have zero mean and unit variance for each column.
+# It also deletes the 2nd, 4th and 5th column. 
+# The iris1 matrix only has columns of "Sepal.Length" and "Petal.Length".  
+iris1 <- scale ( iris [ , - c (2 ,4 ,5) ])
+
+
+## step one: randomly assign the data points to k subgroups (random cluster assignment)
+# Randomly find k (k = 2 in this case) data points (observations) as the initial centers
+# 2 in the sample function means a random sampling of the pool of 2; n indicates draw n times. 
+# we get n from counting the rows of the iris1 dataset by using the "nrow" function. 
+n <- nrow ( iris1 )
+index <- sample (2 , n , replace = T )
+
+# create two subgroups by assigning them to either 1 or 2. 
+iris.sub1 <- iris1 [index ==1 ,]
+iris.sub2 <- iris1 [index ==2 ,]
+
+
+
+### step two: calculate the centers (average position) of each k subgroups
+# use the apply function to calculate the mean of each column
+# "mean.sub1" and "mean.sub2" contains the column means of 
+# "iris.sub1" and "iris.sub2" respectively
+mean.sub1 <- apply(iris.sub1 , 2 , mean )
+mean.sub2 <- apply(iris.sub2 , 2 , mean )
+
+#create a plot and label it using different colors
+# col =  2 for red and 3 for green
+# pch = 16 sets the shape of the points in the plot to be filled circles.
+plot(iris1 , col = index +1 , pch =16)
+
+#plot the means of the first and second columns from two datasets 
+# (iris.sub1 and iris.sub2) as star-shaped points on an existing plot. 
+# The point representing mean.sub1 will be colored red, 
+# and the point representing mean.sub2 will be colored green. 
+points (x = mean.sub1 [1] , y = mean.sub1 [2] , col =2 , pch =8)
+points (x = mean.sub2 [1] , y = mean.sub2 [2] , col =3 , pch =8)
+
+## calculate within-group sum squared error
+WSSE_1<- SSE(iris.sub1,mean.sub1)
+WSSE_2<- SSE(iris.sub2,mean.sub2)
+total_WSSE_1 <- sum(WSSE_1,WSSE_2)
+
+
+
+
+### step three: regroup data points 
+### (assigned to the cluster of the nearest center based on Euclidean Distance)
+
+## Define a function to calculate the Euclidean distance between two points (x and y). 
+## It calculates the square root of the sum of squares of differences between 
+## corresponding elements of x and y.
+
+Eudist <- function (x, y) sqrt (sum ((x-y)^2) )
+
+## For the two data points, find the closest center
+# Calculate the distance from mean.sub1 (one center) to 
+# every data point in iris1  using the Eudist function.
+# sapply applies the Eudist function to each element in the sequence 1 to n (1:n).
+d1 <- sapply (1:n, function (i) Eudist ( mean.sub1 , iris1 [i ,]))
+d2 <- sapply (1:n, function (i) Eudist ( mean.sub2 , iris1 [i ,]))
+
+# update the group index by finding which distance (dr or d2) is the smaller 
+# The which.min function returns the index of the minimum value in a vector
+
+index.new <- apply( cbind (d1 , d2), 1, which.min)
+
+#regroup based on the closer distance  
+iris.sub1 <- iris1 [ index.new ==1 ,]
+iris.sub2 <- iris1 [ index.new ==2 ,]
+
+#recalculate the mean of subgroups 
+mean.sub1 <- apply (iris.sub1 , 2, mean )
+mean.sub2 <- apply (iris.sub2 , 2, mean )
+
+#update the plot and the points 
+plot (iris1 , col = index.new +1, pch =16)
+points (x= mean.sub1[1] , y= mean.sub1 [2] , col =2, pch =8)
+points (x= mean.sub2[1] , y= mean.sub2 [2] , col =3, pch =8)
+
+## calculate within-group sum squared error
+WSSE_1<- SSE(iris.sub1,mean.sub1)
+WSSE_2<- SSE(iris.sub2,mean.sub2)
+total_WSSE_2 <- sum(WSSE_1,WSSE_2)
+
+### END of Iteration One 
+
+
+### Step Four: Re-calculate the centers of current clusters, namely repeat step three
+## Define a function to calculate the Euclidean distance between two points (x and y). 
+## It calculates the square root of the sum of squares of differences between 
+## corresponding elements of x and y.
+
+Eudist <- function (x, y) sqrt (sum ((x-y)^2) )
+
+## For the two data points, find the closest center
+# Calculate the distance from mean.sub1 (one center) 
+# to every data point in iris1 using the Eudist function.
+# sapply applies the Eudist function to each element in the sequence 1 to n (1:n).
+d1 <- sapply (1:n, function (i) Eudist ( mean.sub1 , iris1 [i ,]))
+d2 <- sapply (1:n, function (i) Eudist ( mean.sub2 , iris1 [i ,]))
+
+# update the group index by finding which distance (dr or d2) is the smaller 
+# The which.min function returns the index of the minimum value in a vector
+
+index.new <- apply( cbind (d1 , d2), 1, which.min)
+
+#regroup based on the closer distance  
+iris.sub1 <- iris1 [ index.new ==1 ,]
+iris.sub2 <- iris1 [ index.new ==2 ,]
+
+#recalculate the mean of subgroups 
+mean.sub1 <- apply (iris.sub1 , 2, mean )
+mean.sub2 <- apply (iris.sub2 , 2, mean )
+
+#update the plot and the points 
+plot (iris1 , col = index.new +1, pch =16)
+points (x= mean.sub1[1] , y= mean.sub1 [2] , col =2, pch =8)
+points (x= mean.sub2[1] , y= mean.sub2 [2] , col =3, pch =8)
+
+## calculate within-group sum squared error
+WSSE_1<- SSE(iris.sub1,mean.sub1)
+WSSE_2<- SSE(iris.sub2,mean.sub2)
+total_WSSE_3 <- sum(WSSE_1,WSSE_2)
+
+### END of iteration 2 
+
+#### The script above answers Question 1 and 2
+```
+```{r}
+#### The bug in my custom function prevents me generating the pdf 
+#### Thus I put the code in the comment below 
+#### Question 3a: Write an R function and your function should take at least two 
+#### inputs: dataset and k,  
+#### and two outputs: the final cluster label and number of iterations
+#### The function is not correct, and I failed to figure out why after 
+#### more than 2 hours. 
+#### this is the error: "Error in e2[[j]] : subscript out of bounds"
+
+### Start of the function 
+
+# k_means_clustering <- function(data, k) {
+#   Eudist <- function(x, y) sqrt(sum((x - y)^2))
+#   
+#   SSE <- function(data, center) {
+#     n <- nrow(data)
+#     se_i <- sapply(1:n, function(i) sum((data[i, ] - center)^2))
+#     sum(se_i)
+#   }
+#   
+#   n <- nrow(data)
+#   
+#   ## Initial step
+#   index <- sample(k, n, replace = T)
+#   # create list vectors to store the data points, 
+    # and mean vectors for each cluster respectively
+#   cluster_data <- vector("list", k)
+#   cluster_means <- vector("list", k)
+#   #create a numeric vector to store the WSS for each of the k clusters, 
+    #filled with zeros by default
+#   cluster_wss <- numeric(k)
+#   
+#   ## start of the for loop to update the cluster assignment and recalculating cluster centers 
+#   for (j in 1:k) {
+#     # create clusters and assign by index; stored in the list of "cluster_data" 
+#     cluster_data[[j]] <- data[index == j, ]
+#     # calculates the mean of each column, and stored in the "cluster_means" list
+#     cluster_means[[j]] <- apply(cluster_data[[j]], 2, mean)
+#   }
+#   
+#   ## Initialize total within-cluster sum of squares
+#   twss <- c(0, sum(sapply(1:k, function(j) SSE(cluster_data[[j]], cluster_means[[j]]))))
+#   i <- 2
+#   
+#   ## set the stopping criteria (convergence)
+#   while (abs(twss[i] - twss[i - 1]) > 0.000001) {
+#     ## calculating distances and assigning new clusters with nested "sapply" function 
+#     # The outer "sapply" iterates over the k clusters, 
+#     # and the inner "sapply" iterates over the n data points, 
+#     # The resulting "distances" matrix has k columns (one for each cluster center) 
+#     # and n rows (one for each data point), 
+#     #with each entry representing the distance between a data point and a cluster center. 
+# distances <- sapply(1:k, function(j) sapply(1:n, function(i) 
+# Eudist(cluster_means[[j]], data[i, ])))
+#     # assigns each data point to the nearest cluster 
+      # by finding the minimum distance across all clusters
+#     index <- apply(distances, 2, which.min)
+#     
+#     # updating cluster data and means
+#     for (j in 1:k) {
+#       cluster_data[[j]] <- data[index == j, ]
+#       cluster_means[[j]] <- apply(cluster_data[[j]], 2, mean)
+#     }
+#     
+#     # updating total within-cluster sum of squares
+#     cluster_wss <- sapply(1:k, function(j) SSE(cluster_data[[j]], cluster_means[[j]]))
+#     twss <- c(twss, sum(cluster_wss))
+#     # increase the iteration counter 
+#     i <- i + 1
+#   } # End of the while loop
+#   
+#   list(cluster_labels = index, iterations = i - 1)
+# } #End of the function
+### check the result of the custom function. 
+# data <- iris[,-5]
+# k <- 2
+# result <- k_means_clustering(data, k) 
+# print(result$cluster_labels)
+# print(result$iterations)
+
+####  No result could be returned. 
+#### "Error in e2[[j]] : subscript out of bounds"
+
+
+
+
+### Question 3b validate the function using kmeans()
+data <- iris[,-5]
+k <- 2
+kmeans_result <- kmeans(data, k)
+print(kmeans_result$tot.withinss)
+
+
+
+####Question 4: Apply kmeans() function on the iris dataset (without 5th column). 
+#### Investigate the impact of the parameter k, e.g., by varying k, 
+#### how does certain numeric score change?
+
+
+for (i in 1:10) {
+  kmeans_result <- kmeans(data, i)
+  print(kmeans_result$tot.withinss)
+}
+
+#### The TWSS decreases, as k increases
+#### the choose the optimal k, draw an elbow plot 
+
+library(tidyverse)
+
+# A function to calculate TWSS for k-means
+calculate_twss <- function(k, data) {
+  km <- kmeans(data, centers = k)
+  km$tot.withinss
+}
+
+# Calculating TWSS for k from 1 to 10
+k_values <- 1:10
+twss_values <- map_dbl(k_values, calculate_twss, data = data)
+
+# Plotting the results 
+tibble(k = k_values, twss = twss_values) %>%
+  ggplot(aes(x = k, y = twss)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Elbow Method") +
+  xlab("Number of Clusters (k)") +
+  ylab("Total Within-Cluster Sum of Squares (TWSS)")+
+  scale_x_continuous(breaks = seq(min(k_values), max(k_values), by = 1))
+
+#### The optimal k is 2 by viewing the elbow plot. 
+
+```
+
+
+
+
+
+
+

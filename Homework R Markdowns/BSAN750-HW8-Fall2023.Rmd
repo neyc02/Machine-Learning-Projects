@@ -1,0 +1,368 @@
+---
+title: "Assignment 8 -- Predicting Term Deposit Subscription"
+author: "Names: Haoyang Yu"
+date: "Due by November 26, 2023"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+path<- "C:\\Users\\h043y640\\OneDrive - University of Kansas\\desktop\\Classes\\750 Machine Learning\\R\\HW"
+knitr::opts_knit$set(root.dir = path)
+```
+
+## Data
+
+* The data is related with direct marketing campaigns (phone calls) of a Portuguese banking institution. **The classification goal is to predict if the client will subscribe a term deposit (variable y).** 
+```{r load-data}
+dat <- read.table(paste0(path, "\\bank-additional-full.csv"), header = TRUE, sep = ";")
+```
+## Instruction
+
+* Your submission should be a managerial report. That is, you are expected to well organize your analysis with Introduction, Data Description, Methods and Results, and Conclusion. Please do not include any unnecessary output.
+* For Methods, you are expected to follow the steps below. 
+
+    1. Begin with logistic model. 
+
+```{r logistic model}
+# Recoding 'y' from 'no'/'yes' to 0/1
+dat$y <- ifelse(dat$y == "yes", 1, 0)
+
+## randomly split data to training and testing
+n<- nrow(dat)
+index<- sample(n, 0.8*n)
+dat_train<- dat[index,]
+dat_test<- dat[-index, ]
+
+# Fitting model on training data
+logit_model_train <- glm(y ~ ., data = dat_train, family = binomial())
+
+# Predicting on testing data
+fitted_probabilities <- predict(logit_model_train, newdata = dat_test, type = "response")
+
+### This model has issues with multicollinearity. This typically happens when one or more predictor variables in the model are linear combinations of others or if there are variables with very little variation. Thus I proceed to refine the model with different variable selection methods. 
+
+```
+
+    2. Refine this model with different variable selection methods.
+```{r Refine the logistic model}
+## Stepwise 
+# Load the MASS package for stepAIC function
+library(MASS)
+# Stepwise selection
+stepwise_model <- stepAIC(logit_model_train, direction = "both", trace = 0)
+# Fit the refined model
+refined_logit_model <- glm(formula(stepwise_model), data = dat_train, family = binomial())
+
+
+## LASSO
+# Load the glmnet package for LASSO 
+library(glmnet)
+
+# Prepare the matrix of predictors and response vector
+x <- model.matrix(y ~ ., data = dat_train)[, -1]
+y <- dat_train$y
+
+# Fit LASSO model
+lasso_model <- glmnet(x, y, family = "binomial", alpha = 1)
+
+# Selecting a lambda value (tuning parameter)
+cv_lasso <- cv.glmnet(x, y, family = "binomial", alpha = 1)
+best_lambda <- cv_lasso$lambda.min
+
+# Refit the model with the selected lambda
+refined_lasso_model <- glmnet(x, y, family = "binomial", alpha = 1, lambda = best_lambda)
+
+
+## Ridge regression model 
+
+# Set alpha = 0 for Ridge regression
+ridge_model <- glmnet(x, y, family = "binomial", alpha = 0)
+
+# Perform cross-validation to select the best lambda value
+cv_ridge <- cv.glmnet(x, y, family = "binomial", alpha = 0)
+best_lambda_ridge <- cv_ridge$lambda.min
+
+# Refit the Ridge model using the selected lambda
+refined_ridge_model <- glmnet(x, y, family = "binomial", alpha = 0, lambda = best_lambda_ridge)
+
+```
+    3. For classification, you may consider both symmetric and asymmetric cost. For asymmetric cost, make your own assumptions about the weights.
+```{r Model evaluation}
+
+### Symetric Costs 
+
+library(ROCR)
+
+# Prepare the matrix of predictors for test data
+x_test <- model.matrix(y ~ ., data = dat_test)[, -1]
+
+# Make predictions using each model
+# For Stepwise and Ridge models
+predictions_stepwise <- predict(refined_logit_model, newdata = dat_test, type = "response")
+predictions_ridge <- predict(refined_ridge_model, newx = x_test, type = "response", s = best_lambda_ridge)
+
+# For LASSO model
+predictions_lasso <- predict(refined_lasso_model, newx = x_test, type = "response", s = best_lambda)
+
+# Convert probabilities to binary class 
+class_stepwise <- ifelse(predictions_stepwise > 0.5, 1, 0)
+class_ridge <- ifelse(predictions_ridge > 0.5, 1, 0)
+class_lasso <- ifelse(predictions_lasso > 0.5, 1, 0)
+
+# Actual classes
+actual_classes <- dat_test$y
+
+# Function to calculate accuracy and precision
+calc_metrics <- function(actual, predicted) {
+  true_positives <- sum(actual == 1 & predicted == 1)
+  true_negatives <- sum(actual == 0 & predicted == 0)
+  false_positives <- sum(actual == 0 & predicted == 1)
+  false_negatives <- sum(actual == 1 & predicted == 0)
+  
+  accuracy <- (true_positives + true_negatives) / length(actual)
+  precision <- true_positives / (true_positives + false_positives)
+  
+  return(list(accuracy = accuracy, precision = precision))
+}
+
+# Calculate metrics for each model
+metrics_stepwise <- calc_metrics(actual_classes, class_stepwise)
+metrics_ridge <- calc_metrics(actual_classes, class_ridge)
+metrics_lasso <- calc_metrics(actual_classes, class_lasso)
+
+# Calculate AUC for each model
+pred_stepwise <- prediction(predictions_stepwise, actual_classes)
+auc_stepwise <- performance(pred_stepwise, "auc")@y.values[[1]]
+
+pred_ridge <- prediction(predictions_ridge, actual_classes)
+auc_ridge <- performance(pred_ridge, "auc")@y.values[[1]]
+
+pred_lasso <- prediction(predictions_lasso, actual_classes)
+auc_lasso <- performance(pred_lasso, "auc")@y.values[[1]]
+
+# Output the metrics
+list(stepwise = list(metrics = metrics_stepwise, auc = auc_stepwise),
+     ridge = list(metrics = metrics_ridge, auc = auc_ridge),
+     lasso = list(metrics = metrics_lasso, auc = auc_lasso))
+
+
+###For asymmetric cost 
+
+# Define weights for False Positives and False Negatives
+w.FP <- 1
+w.FN <- 2
+
+# Function to find the optimal cutoff
+find_optimal_cutoff <- function(pred.p, obs) {
+  p.seq <- seq(0.01, 1, by = 0.01)
+  cost <- numeric(length(p.seq))
+  
+  for (i in seq_along(p.seq)) {
+    pcut <- p.seq[i]
+    pred.class <- ifelse(pred.p > pcut, 1, 0)
+    cost[i] <- sum((obs == 0 & pred.class == 1) * w.FP + (obs == 1 & pred.class == 0) * w.FN)
+  }
+  
+  optimal_cutoff <- p.seq[which.min(cost)]
+  return(optimal_cutoff)
+}
+
+# Find the optimal cutoff for each model
+optimal_cutoff_stepwise <- find_optimal_cutoff(predictions_stepwise, actual_classes)
+optimal_cutoff_ridge <- find_optimal_cutoff(predictions_ridge, actual_classes)
+optimal_cutoff_lasso <- find_optimal_cutoff(predictions_lasso, actual_classes)
+
+# Output the optimal cutoffs for each model
+list(
+  stepwise = optimal_cutoff_stepwise,
+  ridge = optimal_cutoff_ridge,
+  lasso = optimal_cutoff_lasso
+)
+
+
+### Evaluate the models based on the optimal cutoffs
+
+# Calculate AUC using the ROCR package
+calc_auc <- function(pred.p, actual) {
+  pred_obj <- prediction(pred.p, actual)
+  auc <- performance(pred_obj, "auc")@y.values[[1]]
+  return(auc)
+}
+# Apply the optimal cutoffs and evaluate the models
+apply_cutoff <- function(pred.p, cutoff) {
+  ifelse(pred.p > cutoff, 1, 0)
+}
+
+# Evaluate each model
+evaluate_model <- function(predictions, actual, cutoff) {
+  pred_class <- apply_cutoff(predictions, cutoff)
+  metrics <- calc_metrics(actual, pred_class)
+  auc <- calc_auc(predictions, actual)
+  return(list(metrics = metrics, auc = auc))
+}
+
+# Actual classes
+actual_classes <- dat_test$y
+
+# Evaluate Stepwise model
+evaluation_stepwise <- evaluate_model(predictions_stepwise, actual_classes, optimal_cutoff_stepwise)
+
+# Evaluate Ridge model
+evaluation_ridge <- evaluate_model(predictions_ridge, actual_classes, optimal_cutoff_ridge)
+
+# Evaluate LASSO model
+evaluation_lasso <- evaluate_model(predictions_lasso, actual_classes, optimal_cutoff_lasso)
+
+
+# Output the evaluation results
+list(
+  stepwise = evaluation_stepwise,
+  ridge = evaluation_ridge,
+  lasso = evaluation_lasso
+)
+```
+    4 and 5 Apply and finetune CART 
+```{r CART}
+library(rpart)
+
+# Fit the initial CART model
+dat_cart_bigtree <- rpart(y ~ ., 
+                          data = dat_train, 
+                          method = "class", 
+                          parms = list(loss = matrix(c(0, 1, 1, 0), nrow = 2)), 
+                          cp = 0.001)
+
+# Analyze the complexity of the initial tree
+plotcp(dat_cart_bigtree)
+cptable <- printcp(dat_cart_bigtree)
+
+
+# Select the cp value with the minimum xerror
+cp.min <- cptable[which.min(cptable[, "xerror"]), "CP"]
+
+# Prune the tree using the selected cp value
+dat_cart_pruned <- prune(dat_cart_bigtree, cp = cp.min)
+
+# Make predictions using the pruned model
+predictions_pruned <- predict(dat_cart_pruned, newdata = dat_test, type = "class")
+
+# Calculate accuracy for the pruned CART model
+accuracy_pruned <- sum(predictions_pruned == dat_test$y) / nrow(dat_test)
+
+# Calculate precision for the pruned CART model
+true_positives <- sum(dat_test$y == 1 & predictions_pruned == 1)
+predicted_positives <- sum(predictions_pruned == 1)
+precision_pruned <- true_positives / predicted_positives
+
+# Calculate AUC for the pruned CART model
+pred_pruned_prob <- predict(dat_cart_pruned, newdata = dat_test, type = "prob")[,2]
+auc_pruned <- performance(prediction(pred_pruned_prob, dat_test$y), "auc")@y.values[[1]]
+
+# Compare with other models (symetric cost)
+# accuracy, precision, and AUC for CART
+results_cart <- list(
+  cart_pruned = list(accuracy = accuracy_pruned, precision = precision_pruned, auc = auc_pruned)
+)
+
+# Output the comparison results
+results_cart
+
+
+####Asymetric Costs
+## Find the optimal cutoff for CART
+# Define weights for false positives and false negatives
+w.FP <- 1
+w.FN <- 2
+
+# Calculate weighted misclassification cost for each threshold
+calculate_cost <- function(threshold, predictions, actual, w.FP, w.FN) {
+  predicted_classes <- ifelse(predictions > threshold, 1, 0)
+  false_positives <- sum(actual == 0 & predicted_classes == 1)
+  false_negatives <- sum(actual == 1 & predicted_classes == 0)
+  cost <- (false_positives * w.FP) + (false_negatives * w.FN)
+  return(cost)
+}
+
+# Predicted probabilities for the CART model
+predictions_cart_prob <- predict(dat_cart_pruned, newdata = dat_test, type = "prob")[,2]
+
+# Search for the optimal threshold
+thresholds <- seq(0.01, 1, by = 0.01)
+costs <- sapply(thresholds, function(threshold) calculate_cost(threshold, predictions_cart_prob, dat_test$y, w.FP, w.FN))
+
+# Find the optimal threshold
+optimal_threshold <- thresholds[which.min(costs)]
+
+# Output the optimal threshold
+optimal_threshold
+
+
+predictions_pruned_class_asymmetric <- ifelse(predictions_cart_prob > optimal_threshold, 1, 0)
+
+# Calculate accuracy for the pruned CART model under asymmetric costs
+accuracy_pruned_asymmetric <- sum(predictions_pruned_class_asymmetric == dat_test$y) / nrow(dat_test)
+
+# Calculate precision for the pruned CART model under asymmetric costs
+true_positives_asymmetric <- sum(dat_test$y == 1 & predictions_pruned_class_asymmetric == 1)
+predicted_positives_asymmetric <- sum(predictions_pruned_class_asymmetric == 1)
+precision_pruned_asymmetric <- if (predicted_positives_asymmetric > 0) {
+    true_positives_asymmetric / predicted_positives_asymmetric
+} else {
+    NA  # Avoid division by zero
+}
+
+# Compile the asymmetric cost summary for the pruned CART model
+summary_cart_pruned_asymmetric <- list(
+  accuracy = accuracy_pruned_asymmetric,
+  precision = precision_pruned_asymmetric
+)
+
+# Output the summary
+summary_cart_pruned_asymmetric
+
+# Function to calculate weighted misclassification cost
+calc_weighted_cost <- function(actual, predicted, w.FP, w.FN) {
+  false_positives <- sum(actual == 0 & predicted == 1)
+  false_negatives <- sum(actual == 1 & predicted == 0)
+  weighted_cost <- (false_positives * w.FP) + (false_negatives * w.FN)
+  return(weighted_cost)
+}
+
+# Calculate the weighted cost for each model using the optimal cutoffs
+cost_stepwise <- calc_weighted_cost(dat_test$y, apply_cutoff(predictions_stepwise, optimal_cutoff_stepwise), w.FP, w.FN)
+cost_ridge <- calc_weighted_cost(dat_test$y, apply_cutoff(predictions_ridge, optimal_cutoff_ridge), w.FP, w.FN)
+cost_lasso <- calc_weighted_cost(dat_test$y, apply_cutoff(predictions_lasso, optimal_cutoff_lasso), w.FP, w.FN)
+
+
+# Calculate cost for pruned CART model
+predictions_pruned_class <- ifelse(predictions_cart_prob > optimal_threshold, 1, 0) 
+cost_pruned_cart <- calc_weighted_cost(dat_test$y,predictions_pruned_class, w.FP, w.FN)
+
+# Compare the costs of different models
+asymmetric_cost_comparison <- list(
+  stepwise = cost_stepwise,
+  ridge = cost_ridge,
+  lasso = cost_lasso,
+  cart_pruned = cost_pruned_cart
+)
+
+# Output the comparison
+asymmetric_cost_comparison
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

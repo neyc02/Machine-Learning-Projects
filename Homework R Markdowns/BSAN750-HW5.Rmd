@@ -1,0 +1,531 @@
+---
+title: "BSAN750 Homework 5"
+author: 'Name: Haoyang Yu'
+date: "Due: 2023-10-9"
+output:
+  word_document:
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load the dataset ["auto_mpg.csv"](https://shaobo-li.github.io/Teaching/Data/auto_mpg.csv), then answer the following questions. The details of the dataset can be found [here](https://archive.ics.uci.edu/ml/datasets/auto+mpg).
+
+
+## Explore the dataset and answer the following questions:
+a. What are the variable names? What is the type of each variable? 
+b. Do you need to change the type of any of these variables in order to fit a linear regression? If yes, which ones? Then, make the change accordingly.
+
+**Answer:** 
+a. mpg: numeric
+   cylinders: integer
+   displ(displacement): numeric
+   hp (horsepower): numeric
+   weight: integer
+   accl(acceleration): numeric
+   myear (model year): integer
+   origin: integer
+   name: character or factor
+b. I decided to change cylinders, model year, and origin into qualitative variables (factors), because they there are only a small number of possible values for them. 
+**Code:**
+```{r}
+##############
+library(tidyverse)
+auto_data <- read.csv("C:\\Users\\h043y640\\OneDrive - University of Kansas\\Desktop\\Classes\\Data Mining and Machine Learning\\HW\\auto_mpg.csv")
+names(auto_data)
+str(auto_data)
+auto_data <- auto_data %>%
+  mutate(across(c("origin", "cylinders", "myear"), as.factor))
+summary(auto_data)
+str(auto_data)
+
+# regroup "myear" into less categories. practice in Ames Housing data  
+##############
+```
+
+## Based on your processed data, first fit a linear regression model to predict `mpg` using all potential predictors, and show the summary output. Then, answer the following questions.
+
+**Code for model fitting and results:**
+```{r}
+##############
+# mod_all <- lm(mpg~., data = auto_data)
+# summary(mod_all)
+
+mod_without_name <- lm(mpg ~ . - name, data = auto_data)
+summary(mod_without_name)
+### missing values were ommited using lm function, end up with 392 observations 
+##############
+```
+
+### What is the estimated coefficient for `hp` (horsepower)? What does this number mean? (No need to write code)
+
+**Answer:**
+ -0.0392323. This coefficient is statistically significant at the 0.01 level (Pr(>|t|) = 0.002795), indicating that it is likely not due to random chance.This coefficient represents the expected change in mpg for a one-unit increase in horsepower, holding all other variables constant. Specifically, for each additional unit of horsepower, the model predicts a decrease in mpg of approximately 0.0392 (rounded by 4). 
+
+### What are the estimated coefficients for `origin`? What do these numbers mean? (If you see only one coefficient for `origin`, re-think about #1.1.1)
+
+**Answer:**
+The estimated coefficients for origin2 and origin3 are 1.6932853 and 2.2929268.
+Both coefficients are statistically significant, with origin2 at the 0.01 level (Pr(>|t|) = 0.001136) and origin3 at the 0.001 level (Pr(>|t|) = 5.41e-06).
+
+These coefficients are dummy variables representing the different categories of the origin variable. Origin 1 serves as the reference category for origin2 and origin3.
+
+A car from origin 2 is expected to have an mpg that is 1.6933 units higher than a car from origin1, holding all other variables constant.
+
+A car from origin 3 is expected to have an mpg that is 2.2929 units higher than a car from origin1, holding all other variables constant.
+
+### Are there insignificant variables? If yes, which ones?
+
+**Answer:**
+Based on the threshold of p>0.05 as insignificant, see the variables below
+displ: p-value = 0.081785 (marginal significance)
+accl: p-value = 0.966902 
+myear71: p-value = 0.265019 
+myear72: p-value = 0.542257 
+myear73: p-value = 0.443947 
+myear74: p-value = 0.147056 
+myear75: p-value = 0.299297 
+myear76: p-value = 0.062782 (marginal significance)
+
+
+### Obtain MSE and adjusted R^2.
+
+**Answer:** 
+Adjusted R-squared: 0.8668941 
+Mean Squared Error: 7.632809
+**Code:**
+```{r}
+##############
+mod_summary <- summary(mod_without_name)
+
+# Obtain adjusted R-squared
+adj_r_squared <- mod_summary$adj.r.squared
+
+# Calculate the MSE from the residuals
+mse <- mean(mod_summary$residuals^2)
+
+# Print the results
+cat("Adjusted R-squared:", adj_r_squared, "\n")
+cat("Mean Squared Error:", mse, "\n")
+##############
+```
+
+### What is the degree of freedom of the model (using the formula: n-p-1)? Is it the same as the one from model output? Why or why not?
+
+**Answer:** 
+df = 398-6-22-1. it is the same  as the F-statistic: 116.8 on 22 and 369 DF. 
+
+
+### Following 1.2, conduct model diagnostics by appropriate graphical tools. Are there any type of model assumption violations? If yes, please address them and fit an improved model. Obtain MSE and adjusted R^2 for the new model.
+
+**Answer:** 
+Residuals vs Fitted plot: The red line in this plot should be approximately horizontal at zero if assumptions are met. In this case, there's a slight curvature, suggesting potential non-linearity.
+
+Normal Q-Q plot: The points should lie on the straight diagonal line for the normality assumption to hold. There are some deviation in the tails, indicating that the residuals may not be normally distributed.
+
+Scale-Location plot: The red line should be horizontal with equally spread points for the homoscedasticity assumption to hold. There's some spread, but it's not very pronounced, which might indicate a slight issue with homoscedasticity.
+
+Residuals vs Leverage plot: There doesn't appear to be any specific pattern or extreme values that unduly influence the model's performance.
+
+Potential solution for model improvement: 
+I ploted the relationship between residuals and each predictor variable. 
+All the continuous variables have slight linearity assumption violation. 
+
+I tried to add polynomial terms for four continuous variables displ, hp, weight,and accl
+but adding all to the model does not help much, so I tried various combinations. 
+The final decision is to only do polynomial terms for displ. 
+
+I also tried to log transform the dependent variable mpg, which helped increasing 
+the adjusted R squared, and decreased the MSE (after putting it back to the original scale).
+
+However, I do not feel it's necessary to do the log transformation for this assignment. 
+Thus, I proceed with the model only including the polynomial term for "displ" as the improved one. 
+
+**Code:**
+```{r}
+##############
+par(mfrow=c(2,2))
+plot(mod_without_name)
+
+# Remove rows with missing values and drop the 'name' variable
+auto_data_clean <- auto_data %>% 
+                   na.omit() %>% 
+                   dplyr::select(-name)
+# Fit your model
+mod_without_name <- lm(mpg ~ ., data = auto_data_clean)
+
+# Get the residuals from the model
+residuals_values <- residuals(mod_without_name)
+
+# Plot residuals vs each predictor to check linearity assumption 
+plot(auto_data_clean$cylinders, residuals_values, main = "cylinders vs Residuals", xlab = "cylinders", ylab = "Residuals")  #ok
+{
+  plot(auto_data_clean$displ, residuals_values, main = "displ vs Residuals", xlab = "displ", ylab = "Residuals")
+  lines(lowess(auto_data_clean$displ, residuals_values), col = "red")
+}   # polynomial term 
+{
+  plot(auto_data_clean$hp, residuals_values, main = "hp vs Residuals", xlab = "hp", ylab = "Residuals")
+  lines(lowess(auto_data_clean$hp, residuals_values), col = "red")
+} #slight violation 
+{
+ plot(auto_data_clean$weight, residuals_values, main = "weight vs Residuals", xlab = "weight", ylab = "Residuals")
+  lines(lowess(auto_data_clean$weight, residuals_values), col = "red")
+} #slight violation
+
+{
+ plot(auto_data_clean$accl, residuals_values, main = "accl vs Residuals", xlab = "accl", ylab = "Residuals")
+  lines(lowess(auto_data_clean$accl, residuals_values), col = "red")
+} #slight violation
+
+plot(auto_data_clean$myear, residuals_values, main = "myear vs Residuals", xlab = "myear", ylab = "Residuals")
+plot(auto_data_clean$origin, residuals_values, main = "origin vs Residuals", xlab = "origin", ylab = "Residuals")
+
+
+# Fit the improved model with polynomial terms
+
+mod_improved <- lm(mpg ~ cylinders + I(displ^2) + hp + weight + accl + myear + origin, data = auto_data_clean)
+
+mod_im_sum <- summary(mod_improved)
+
+# Obtain adjusted R-squared
+adj_r_squared_im <- mod_im_sum$adj.r.squared
+
+# Calculate the MSE from the residuals
+mse_im <- mean(mod_im_sum$residuals^2)
+
+print(paste("MSE for the improved model: ", mse_im))
+print(paste("Adjusted R-squared for the improved model: ", adj_r_squared_im))
+
+#####  
+# # Log-transform the mpg variable
+# auto_data$log_mpg <- log(auto_data$mpg)
+# 
+# # Fit the model with log-transformed mpg
+# mod_log_mpg <- lm(log_mpg ~ cylinders + I(displ^2) + hp + weight + accl + myear + origin, data = auto_data)
+# 
+# # Summary statistics
+# mod_log_sum <- summary(mod_log_mpg)
+# 
+# # Obtain adjusted R-squared
+# adj_r_squared_log <- mod_log_sum$adj.r.squared
+# 
+# #Use the log model to make predictions on the original data
+# log_predictions <- predict(mod_log_mpg, newdata = auto_data_clean)
+# 
+# # Transform these predictions back to the original scale
+# original_scale_predictions <- exp(log_predictions)
+# 
+#  # Calculate the residuals in the original scale
+# residuals_original_scale <- original_scale_predictions - auto_data_clean$mpg
+# 
+# # Calculate the MSE on the original scale
+# mse_original_scale <- mean(residuals_original_scale^2)
+# 
+# 
+# print(paste("Adjusted R-squared for the model with log-transformed mpg: ", adj_r_squared_log))
+# print(paste("MSE on the original scale: ", mse_original_scale))
+
+
+
+##############
+```
+
+
+
+## Based on the cleaned data, random split the data to 80% training and 20% testing samples. Answer the following questions.
+
+**Code:**
+```{r}
+##############
+n<- nrow(auto_data_clean)
+index<- sample(n, 0.8*n) #create a training group index with these observations
+
+training<- auto_data_clean[index,] #select the training data
+
+testing<- auto_data_clean[-index,] #the rest is testing data
+
+##############
+```
+
+### Train the same linear regression model as in 1.2 based on the training sample. Then calculate the out-of-sample prediction error (MSPE).
+
+**Answer:** 
+
+**Code:**
+```{r}
+##############
+# Train the linear regression model on the training data
+mod_train <- lm(mpg ~ ., data = training)
+
+# Summary of the training model
+# summary(mod_train)
+
+# Make predictions on the testing data
+predictions <- predict(mod_train, newdata = testing)
+
+# Calculate the residuals
+residuals_test <- testing$mpg - predictions
+
+# Calculate the Mean Squared Prediction Error (MSPE)
+MSPE <- mean(residuals_test^2)
+
+# Print MSPE
+cat("Mean Squared Prediction Error (MSPE):", MSPE, "\n")
+
+##############
+```
+
+
+### Train the same improved linear regression model as in 1.2.7 based on the training sample. Then calculate the out-of-sample prediction error (MSPE).
+
+**Answer:** 
+
+**Code:**
+```{r}
+##############
+# Training the improved model on the training data
+mod_improved_train <- lm(mpg ~ cylinders + I(displ^2) + hp + weight + accl + myear + origin, data = training)
+
+# Making predictions on the testing data
+predictions_test <- predict(mod_improved_train, newdata = testing)
+
+# Calculating the residuals
+residuals_test <- testing$mpg - predictions_test
+
+# Calculating the Mean Squared Prediction Error (MSPE)
+mspe <- mean(residuals_test^2)
+
+# Print the MSPE
+print(paste("Mean Squared Prediction Error (MSPE): ", mspe))
+
+##############
+```
+
+
+## Conduct a 10-fold cross validation using `caret` and obtain the CV score (RMSE, MAE and R^2) for the two models.
+
+**Answer:** 
+
+**Code:**
+```{r}
+##############
+library(caret)
+fitControl <- trainControl(method = "cv", number = 10)
+# Train the model with all possible predictors (seven of them)
+fit1 <- train(mpg ~ cylinders + displ + hp + weight + accl + myear + origin, 
+             data = auto_data_clean, 
+             method = "lm", 
+             trControl = fitControl)
+
+# Summary of the fit
+#summary(fit1)
+
+# CV metrics
+fit1$results
+
+# Train the model
+fit2 <- train(mpg ~ cylinders + I(displ^2) + hp + weight + accl + myear + origin, 
+             data = auto_data_clean, 
+             method = "lm", 
+             trControl = fitControl)
+
+# Summary of the fit
+#summary(fit2)
+
+# CV metrics
+fit2$results
+
+
+##############
+```
+
+
+
+# A Monte Carlo Simulation Study
+
+Monte Carlo simulation is a useful tool in many scientific fields. In statistics and machine learning, MC simulation is typically used to evaluate the numerical performance of an algorithm (broadly defined) as well as to validate some theoretical properties of the algorithm. The idea is that given the true model is known a priori, and use such known model to randomly generate data. Then apply the algorithm to be evaluated to estimate the model based on the generated data, to see if the results are as expected. Below we conduct a MC simulation study to assess several properties of the least square method.
+
+## Generating data from a true model
+
+Assume the true model is 
+$$Y=-3.2+1.5 X_1 +0.9 X_2 - 2.1 X_3 + \epsilon.$$
+where $X_1 \sim N(2, 1.5)$ (normal distribution with mean of 2 and standard deviation of 1.5), $X_2 \sim U(-1, 2)$ (uniform distribution from -1 to 2) and $X_3 \sim Ber(0.3)$ (Bernoulli distribution with mean of 0.3). The random error $\epsilon \sim N(0,1)$ (standard normal distribution).
+
+Let's set the sample size $n=200$. The following code generates $X_1$, $X_2$, and $X_3$. Can you complete the last two lines of code that generates the random error $\epsilon$ and the response variable $Y$?
+
+
+```{r}
+## please remove "eval=FALSE" in the header before you compile to WORD
+n <- 200
+# generate X1
+X1 <- rnorm(n, mean = 2, sd = 1.5)
+# generate X2
+X2 <- runif(n, -1, 2)
+# generate X3
+X3 <- rbinom(n, size = 1, prob = 0.3)
+#### note: you are strongly encouraged to study the above functions
+
+## generate error term epsilon
+err <- rnorm(n, mean = 0, sd = 1)
+## generate response variable Y
+Y <- -3.2 + 1.5 * X1 + 0.9 * X2 - 2.1 * X3 + err
+```
+
+
+## Use `lm()` to fit a linear regression model where Y is dependent variable and $X_1$, $X_2$ and $X_3$ are independent variables. Obtain the estimated coefficients $\hat{\beta}_0$, $\hat{\beta}_1$, $\hat{\beta}_2$, and $\hat{\beta}_3$. Are these values close to those true coefficients in the model?
+
+**Answer:** 
+Given the sample size and the random nature of the data, the estimates being this close to the true values is a good indication that the least squares method is performing well in this simulation.
+**Code:**
+```{r}
+##############
+## Fit the linear model
+fit_model <- lm(Y ~ X1 + X2 + X3)
+
+## Display the model summary to get the estimated coefficients
+summary_fit <- summary(fit_model)
+summary_fit$coefficients
+
+##############
+```
+
+
+## Repeat 2.1 and 2.2 1000 times. Then compute the avarege and variance of each coefficient over the 1000 outputs. In addition, compute a mean squared error of the estimated coefficients to the true coefficients, which is defined as $Avg((\hat{\beta}-\beta)^2)$. (An outline of the code is provided.)
+
+```{r}
+## please remove "eval=FALSE" in the header before you compile to WORD
+n <- 200
+## for loop (repeat 1000 times)
+est_beta_all <- NULL
+for(i in 1:1000){
+  X1 <- rnorm(n, mean = 2, sd = 1.5)
+  X2 <- runif(n, -1, 2)
+  X3 <- rbinom(n, size = 1, prob = 0.3)
+  ## generate error term epsilon
+  err <- rnorm(n, mean = 0, sd = 1)
+  ## generate response variable Y
+  Y <- -3.2 + 1.5 * X1 + 0.9 * X2 - 2.1 * X3 + err
+    
+  ## fit LM using least square
+  fit <- lm(Y ~ X1 + X2 + X3)
+  ## pull the estimated coefficients and store them to the 
+  ##   predefined object "est_beta_all" using rbind()
+  est_beta_all <- rbind(est_beta_all, coef(fit))
+}
+
+## compute mean using apply()
+mean_beta <- apply(est_beta_all, 2, mean)
+mean_beta
+## compute variance using apply()
+var_beta <- apply(est_beta_all, 2, var)
+var_beta
+## compute MSE. You may need to first compute (beta(hat)-beta(true))^2
+##    Hint: beta(hat) is a matrix with 1000 rows and beta(true) is a vector 
+##          of the four true coeff, so you may need to duplicate beta(true) 
+##          such that it becomes a matrix of the same dimension as beta(hat)
+true_beta <- c(-3.2, 1.5, 0.9, -2.1)
+diff_beta <- est_beta_all - matrix(true_beta, nrow = 1000, ncol = 4, byrow = TRUE)
+mse_beta <- apply(diff_beta^2, 2, mean)
+print(mse_beta)
+```
+
+## According to your results in previous question. What do you find? (Hint: you should find that mean_beta is very close to the true beta, and var_beta is almost the same as mse_beta.)
+**Answer:**
+1. OLS is an unbiased estimator, which is evidenced by the fact that the mean of 
+beta is very close to the true β.
+2. The MSE being almost equal to the variance further confirms that the estimator is unbiased.
+
+
+## Now, set $n=500$ and $1000$, and repeat 2.3. Do you find any patterns as $n$ increases?
+**Answer:**
+As the sample size n increases:
+1.the mean of the estimated coefficients (mean_beta) 
+still remain close to the true beta values, 
+affirming the unbiased nature of the OLS estimator.
+$$Bias(\hat{\beta})=E(\hat{\beta})-\beta_{true}=0.$$ 
+2. The variance of the estimated coefficients (var_beta) and MSE for each beta hat decrease,
+making the estimator more reliable. 
+The proximity of mse_beta and var_beta also validates the bias-variance decomposition formula,
+that is 
+$$E((\hat{\beta}-\beta_{true})^2)=[Bias(\hat{\beta})]^2+Var(\hat{\beta}).$$
+
+As n increases, both the variance and MSE for the estimated coefficients decrease, 
+implying that the estimator becomes more efficient. 
+ 
+
+
+```{r eval=FALSE}
+n <- 500
+## for loop (repeat 1000 times)
+est_beta_all <- NULL
+for(i in 1:1000){
+  X1 <- rnorm(n, mean = 2, sd = 1.5)
+  X2 <- runif(n, -1, 2)
+  X3 <- rbinom(n, size = 1, prob = 0.3)
+  ## generate error term epsilon
+  err <- rnorm(n, mean = 0, sd = 1)
+  ## generate response variable Y
+  Y <- -3.2 + 1.5 * X1 + 0.9 * X2 - 2.1 * X3 + err
+    
+  ## fit LM using least square
+  fit <- lm(Y ~ X1 + X2 + X3)
+  ## pull the estimated coefficients and store them to the 
+  ##   predefined object "est_beta_all" using rbind()
+  est_beta_all <- rbind(est_beta_all, coef(fit))
+}
+
+## compute mean using apply()
+mean_beta <- apply(est_beta_all, 2, mean)
+mean_beta
+## compute variance using apply()
+var_beta <- apply(est_beta_all, 2, var)
+var_beta
+## compute MSE. You may need to first compute (beta(hat)-beta(true))^2
+##    Hint: beta(hat) is a matrix with 1000 rows and beta(true) is a vector 
+##          of the four true coeff, so you may need to duplicate beta(true) 
+##          such that it becomes a matrix of the same dimension as beta(hat)
+true_beta <- c(-3.2, 1.5, 0.9, -2.1)
+diff_beta <- est_beta_all - matrix(true_beta, nrow = 1000, ncol = 4, byrow = TRUE)
+mse_beta <- apply(diff_beta^2, 2, mean)
+print(mse_beta)
+
+n <- 1000
+## for loop (repeat 1000 times)
+est_beta_all <- NULL
+for(i in 1:1000){
+  X1 <- rnorm(n, mean = 2, sd = 1.5)
+  X2 <- runif(n, -1, 2)
+  X3 <- rbinom(n, size = 1, prob = 0.3)
+  ## generate error term epsilon
+  err <- rnorm(n, mean = 0, sd = 1)
+  ## generate response variable Y
+  Y <- -3.2 + 1.5 * X1 + 0.9 * X2 - 2.1 * X3 + err
+    
+  ## fit LM using least square
+  fit <- lm(Y ~ X1 + X2 + X3)
+  ## pull the estimated coefficients and store them to the 
+  ##   predefined object "est_beta_all" using rbind()
+  est_beta_all <- rbind(est_beta_all, coef(fit))
+}
+
+## compute mean using apply()
+mean_beta <- apply(est_beta_all, 2, mean)
+mean_beta
+## compute variance using apply()
+var_beta <- apply(est_beta_all, 2, var)
+var_beta
+## compute MSE. You may need to first compute (beta(hat)-beta(true))^2
+##    Hint: beta(hat) is a matrix with 1000 rows and beta(true) is a vector 
+##          of the four true coeff, so you may need to duplicate beta(true) 
+##          such that it becomes a matrix of the same dimension as beta(hat)
+true_beta <- c(-3.2, 1.5, 0.9, -2.1)
+diff_beta <- est_beta_all - matrix(true_beta, nrow = 1000, ncol = 4, byrow = TRUE)
+mse_beta <- apply(diff_beta^2, 2, mean)
+print(mse_beta)
+
+```
+
+
+

@@ -1,0 +1,265 @@
+---
+title: "BSAN750 Homework 4"
+author: "Haoyang Yu"
+date: "Due: 2023-09-25"
+output:
+  word_document:
+    number_sections: yes
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Instruction:** This is an individual assignment. Please directly work on the attached Rmarkdown file and generate a clean and well-organized word/pdf document using the given layout. However, if you can’t successfully compile the rmarkdown file, you should use the attached word document, and manually organize and format your work as if the rmarkdown file is successfully compiled.
+
+# Briefly explain how k-nearest neighbor algorithm works.
+**Answer:** (directly type below)
+The goal of the k-Nearest Neighbors algorithm is to find the nearest neighbors to a specific test point in order to categorize it with a class label (or make a prediction if the outcome is continuous variable.
+The workflow consists of 
+1.Select a number k of the neighbors, and determine the distance metrics (usually Euclidean distance)
+2.Compute the distance between the test point and each point in the training data set
+3.Sort the computed distances in order
+4.Pick the k smallest distances from the ordered list, which are the k nearest neighbors to the test point. 
+5.Decision Making by majority voting: 
+For classification, assign the class label of the majority cases to the test point. 
+For regression, assign the average of the outcome variable of the neighbors to the test point. 
+
+# Apply the k-nearest neighbor algorithm to the "seed" dataset by the following steps:
+## Use the following code to load the data
+**R code:**
+```{r}
+seed <- read.table('http://archive.ics.uci.edu/ml/machine-learning-databases/00236/seeds_dataset.txt', header=F)
+names(seed) <- c("area", "perimeter","campactness", "length", "width", "asymmetry", "groovelength", "type")
+```
+
+The variable "type" is the type of seed which is the response variable (the class label). The rest variables are measures of seed (features) that are used as predictors.
+
+## Standardize the data except for the last column, which is the label of type.
+**R code:**
+```{r}
+# write R code in this chunk
+label_type<- 8   # the column index of class type 
+seed_1<- data.frame(scale(seed[,-label_type])) ## scale
+seed_1$type<- seed$type #add the label_type back 
+
+```
+
+
+## Randomly split the data to 80% training and 20% testing samples.
+**R code:**
+```{r}
+# write R code in this chunk
+n<- nrow(seed_1)
+index<- sample(n, 0.8*n) #create a training group index with these observations 
+training<- seed_1[index,] #select the training data 
+testing<- seed_1[-index,] #the rest is testing data 
+
+```
+
+
+## Use 5-nearest neighbor to predict the wheat type for the testing sample. Report the confusion matrix and the overall missclassification error.
+**R code and results:**
+```{r}
+# write R code in this chunk
+library(class)
+## find parts of data to be input of knn function
+trainX<- training[,-label_type]  ## X of training set
+testX<- testing[,-label_type]  ## X of testing set
+trainY<- training[,label_type]  ## Y of training set (the training label/class label)
+## fitting a knn model, k=5. The output is the predicted class labels 
+k.knn<- 5  # set the k for knn model
+fit_knn<- knn(train = trainX, test = testX, cl=trainY, k=k.knn)
+
+# Generate Confusion Matrix
+conf_matrix <- table(fit_knn, testing[,label_type])
+print(conf_matrix)
+
+## prediction error (misclassification error)
+testY<- testing[,label_type]  ## Y of testing set (only used when assess prediction error)
+mean(fit_knn!=testY) #predicted labels are misaligned with actual ones 
+```
+
+
+**Describe and comment the results:**
+Each row of the confusion matrix represents the predicted classes, 
+and each column represents the actual classes.
+The diagonal line represent the number of cases for which the predicted label is equal to the true label, 
+while the off-diagonal line numbers are misclassified.
+All 11 instances were correctly classified as "1" (True Positives for "1").
+15 instances were correctly classified as "2" (True Positives for "2"). 
+However, 1 instances that were actually "2" were misclassified as "1", 
+and one type "3" was misclassified as a type "1". 
+(one False Positives for type "2" and "3" respectively).
+14 instances were correctly classified as "3" (True Positives for "3").
+The model performs very well for the type "1", with no misclassifications.
+
+The misclassification rate is low; 
+it means the model performs quite well on this particular dataset. 
+
+## Re-do the previous question (only calculate the missclassification error) with 5-fold cross-validation. (Hint: you may follow the steps below.)
+* Instead of a random split, you would randomly divide the data to 5 portions with each 20%. 
+* Then for each 20% data, use it as testing and the rest 80% as training sample, so that you can repeat previous two questions. 
+* Do this 5 times for the 5 portions and you should obtain 5 missclassification errors. 
+* Finally, calcualte the average of these 5 missclassification errors.
+
+**R code and results:**
+```{r}
+# ## 5-fold cross-validation
+k.cv<- 5
+fold_index<- sample(k.cv, n, replace = TRUE)
+me<- rep(NA, k.cv)
+for(i in 1:k.cv){
+  ## find training and testing set 
+  training<- seed_1[fold_index!=i,]
+  testing<- seed_1[fold_index==i,]
+  ## find parts of data to be input of knn function
+  trainX<- training[,-label_type]  ## X of training set
+  testX<- testing[,-label_type]  ## X of testing set
+  trainY<- training[,label_type]  ## Y of training set (the training label)
+  ## fit knn model
+  fit_knn<- knn(train = trainX, test = testX, cl=trainY, k=k.knn)
+  ## calculate testing error
+  testY<- testing[,label_type]
+  me[i]<- mean(fit_knn!=testY) #predicted labels aremisaligned with actual ones 
+}
+
+## get cv score (average of the multiple prediction errors)
+cv_score<- mean(me)
+print(cv_score)
+
+```
+
+
+**Describe and comment the results:**
+The cv_score output indicates the average misclassification error rate across the five folds. 
+The result is low, indicating the model is quite accurate on this dataset. 
+
+
+## Now, repeat previous question (5-fold cross-validation) by varying k (parameter for knn) from 1 to 50. How does the missclassification error changes across k? You may draw a figure to show this.
+
+**R code and results:**
+```{r}
+# write R code in this chunk
+## varying k from 1 to 50
+k.knn.seq<- 1:50
+## outer loop for 1,2,...,50 models
+cv_score<- rep(NA, length(k.knn.seq))
+for(j in 1:length(k.knn.seq)){
+  ## below is the inner loop for CV
+  me<- rep(NA, k.cv)
+  for(i in 1:k.cv){
+    training<- seed_1[fold_index!=i,]
+    testing<- seed_1[fold_index==i,]
+    ## find parts of data to be input of knn function
+    trainX<- training[,-label_type]  ## X of training set
+    testX<- testing[,-label_type]  ## X of testing set
+    trainY<- training[,label_type]  ## Y of training set (the training label)
+    ## fit knn model for k=k.knn.seq[j]
+    fit_knn<- knn(train = trainX, test = testX, cl=trainY, k=k.knn.seq[j])
+    ## calculate testing error
+    testY<- testing[,label_type]
+    me[i]<- mean(fit_knn!=testY)
+  }## end of inner loop
+  
+  ## get cv score for jth model (when k=k.knn.seq[j])
+  cv_score[j]<- mean(me)
+  
+}## end of outer loop
+plot(cv_score, type = 'b', xlab="k")
+summary(cv_score)
+```
+
+
+**Describe and comment the results:**
+
+The misclassification rate flunctuates between 0.06578 and 0.09079. 
+The k for the minimum misclassification error is 4. 
+
+
+
+
+# Complete Q5 and Q6 in Exercise 4.
+
+For Q6 (writing your own function of knn), as previous homework, it is okay that your function may not work, but you are expected to put effort and try your best to write this function.
+
+```{r}
+#Prepare the input data for the function
+### These lines have already been run in the previous questions###
+# label_type<- 8   # the column index of Y (types) in seed_1 data  
+# seed_1<- data.frame(scale(seed_[,-label_type])) ## scale
+# seed_1$Species<- seed_$Species #add the label_type back 
+# n<- nrow(seed_1)
+# index<- sample(n, 0.8*n)
+# training<- seed_1[index,]
+# testing<- seed_1[-index,]
+# trainX<- training[,-label_type]  ## X of training set
+# testX<- testing[,-label_type]  ## X of testing set
+# trainY<- training[,label_type]  ## Y of training set (the training label)
+
+# Define a function to calculate the Euclidean distance
+Eudist <- function (x, y) sqrt (sum ((x-y)^2) )
+
+myknn <- function(X.train, X.test, Y.train, k) {
+  # Initialize an empty vector to store predictions
+  Yhat <- vector("character", nrow(X.test))
+  
+  # Loop through each row in the test set
+  for (i in 1:nrow(X.test)) {
+    # Initialize an empty vector to store distances
+    distances <- c()
+    
+    # Loop through each row in the training set to calculate distances
+    for (j in 1:nrow(X.train)) {
+      distances[j] <- Eudist(X.test[i,], X.train[j,])
+    }
+    
+    # Find the k smallest distances and their corresponding Y labels
+    k_min_indices <- order(distances)[1:k]
+    k_nearest_labels <- Y.train[k_min_indices]
+    
+    # Majority vote to predict the label
+    Yhat[i] <- names(sort(table(k_nearest_labels), decreasing = TRUE)[1])
+  }
+  
+  return(Yhat)
+}
+
+
+#run the costume function 
+k <-5
+Yhat <- myknn(trainX, testX, trainY, k)
+
+#compare Yhat to the knn function result 
+
+# Count the number of mismatches
+num_mismatches <- sum(Yhat != fit_knn)
+num_mismatches
+
+####The costume function gives the same result except for one case.####
+
+
+
+
+
+### Final question on variance and bias tradeoff:
+
+# Below is a summary from the link on slide regarding the tradeoff: 
+# Bias is the difference between the model’s expected predictions and the true values.
+# High bias,low variance algorithms train models that are consistent,but inaccurate on average
+# Variance refers to the algorithm’s sensitivity to specific sets of training data.
+# High variance,low bias algorithms train models that are accurate on average, but inconsistent.
+# Low variance algorithms tend to be less complex with simple or rigid structure; while low bias ones
+# tend to be more complex with flexible underlying structure.
+# An algorithm cannot simultaneously be more complex and less complex. 
+# The tradeoff means to find a balance of bias and variance that minimizes total error
+# Total Error = Bias^2 +Variance+Noise
+# An optimal balance of bias and variance leads to a model that is neither overfit nor underfit.
+
+  
+
+
+
+
+

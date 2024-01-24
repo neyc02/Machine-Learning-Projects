@@ -1,0 +1,452 @@
+---
+title: "Assignment 6 -- Predicting Housing Price using Ames Housing Data"
+author: "Names:Haoyang Yu "
+date: "Due by October 27, 2023"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# path<- "/Users/Shaobo Li/Dropbox/Teaching/KU/Data"
+# knitr::opts_knit$set(root.dir = path)
+
+```
+
+## Instruction
+
+* Your goal for this assignment is to utilize variable selection techniques, both stepwise and LASSO, to find one or more parsimonious linear models to predict and explain the housing price. Below are some general steps:
+1. Explore the data and take necessary steps to clean it. (This is the most time consuming part)
+2. Start with an OLS model with all potential predictors.
+3. Apply stepwise variable selection method and find optimal models.
+4. Apply LASSO variable selection method and find optimal models.
+5. Compare all different candidate models with respect to (1) selected variables and how they influence the housing price; (2) prediction accuracy, e.g., CV scores.
+* Please organize your analysis with comments and main results. Please do not print out any unnecessary output, such as the raw/cleaned data, or any columns.
+
+
+## Details of Ames housing data
+```{r}
+library(AmesHousing)
+Ames <- ames_raw
+startObs <- dim(Ames)[1]
+startVars <- dim(Ames)[2]
+```
+
+
+
+## Data Preperation
+```{r}
+library(tidyverse)
+### change the variables to lower case
+names(Ames) <- tolower(names(Ames))
+# drop the order variable
+Ames <- Ames %>% 
+  dplyr::select(everything(), -order)
+
+
+#### Deal with missing values ####
+
+### Initial Check 
+# return index of columns that have missing values 
+na.cols = which(colSums(is.na(Ames)) > 0)
+# Break down missing values by variable
+sort(colSums(sapply(Ames[na.cols], is.na)), decreasing = TRUE)
+
+##checking duplicate "pid" (propety id)
+# duplicate_pid <- Ames %>%
+#   filter(duplicated(pid) | duplicated(pid, fromLast = TRUE))
+# nrow(duplicate_pid)
+# there is no duplicated "pid"; so we can drop this variable
+Ames <- Ames%>% 
+  dplyr::select(everything(), -pid)
+
+## recoding NAs to No Alley in variable "alley"
+index <- which(is.na(Ames$alley))
+Ames[index, 'alley'] <- 'No Alley'
+
+## lot shape: IR2 and IR3 have the same median_saleprice, so combine IR2 and IR3 into one level 
+index <- which(Ames$`lot shape` == "IR2" | Ames$`lot shape` == "IR3")
+Ames[index, 'lot shape'] <- "Mod+ IR"
+
+## for utilities, all but three have public utility 
+# find the 3 non-allpub utility houses
+index <- which(Ames$utilities != "AllPub")
+# We are going to drop these 3 houses
+Ames <- Ames[-index, ]
+# Now we drop the utitlity variable
+Ames <- Ames %>% 
+  dplyr::select(everything(), -utilities)
+
+
+## pool  
+#return all rows where the pool area is greater than 0 and the pool quality is missing.
+Ames[(Ames$`pool area` > 0) & is.na(Ames$`pool qc`), c('pool area','pool qc')]
+#no pool quality information is missing for houses that have pools
+#change the missing values for pool quality from NA to No Pool
+index <- which(is.na(Ames$`pool qc`))
+Ames[index, "pool qc"] <- 'No Pool'
+# table(Ames$`pool qc`)
+
+### Change column names for easier manipulation (should have done it initially)
+# Get column names
+col_names <- colnames(Ames)
+# Replace spaces with dots
+new_col_names <- gsub(" ", ".", col_names)
+ # Reassign modified column names back to the data frame
+colnames(Ames) <- new_col_names
+#variable.names(Ames)
+
+## land slope: combine moderate and severe land slope into 1 level 
+index <- which(Ames$land.slope != "Gtl")
+Ames[index, "land.slope"] <- "Not Gtl" 
+
+## drop the ms.subclass variable as it is a combination of bldg.type, house.style, and #year.built.
+Ames <- Ames %>% dplyr::select(everything(), -ms.subclass)
+
+## transform year built and year remodeled into house age etc. 
+Ames$house.age <- Ames$yr.sold - Ames$year.built
+Ames$yrs.since.remod <- Ames$yr.sold - Ames$`year.remod/add`
+
+
+##“NA”" in bsmt.qual, bsmt.cond, bsmt.exposure, bsmtfin.type1, and bsmtfin.type2, actually means “No Basement.”
+# replace NA's with "No Basement"  
+Ames[, c('bsmt.qual','bsmt.cond','bsmt.exposure','bsmtfin.type.1','bsmtfin.type.2')][is.na(Ames[, c('bsmt.qual','bsmt.cond','bsmt.exposure','bsmtfin.type.1','bsmtfin.type.2')])] <- "No Basement"
+
+## drop the missing values in these variables: 
+# mas.vnr.area, bsmtfin.sf.1, bsmtfin.sf.2, bsmt.unf.sf, total.bsmt.sf
+Ames <- Ames %>%
+  filter(complete.cases(mas.vnr.area, bsmtfin.sf.1, bsmtfin.sf.2, bsmt.unf.sf, total.bsmt.sf))
+
+##Because most of roof.matl (roof material) is CompShg with the remaining spread across 7 categories, I transformed the data to Comp.Shg or not.
+Ames$roof.matl <- ifelse(Ames$roof.matl == 'CompShg', 'CompShg', 'Other')
+
+##Do the same to heating: 
+index <- which(Ames$heating == "GasW" | Ames$heating == "OthW")
+Ames[index, 'heating'] <- "HotW"
+# make all else other
+index <- which(Ames$heating != "GasA" & Ames$heating != "HotW")
+Ames[index, 'heating'] <- "Other"
+# table(Ames$heating)
+
+## Lot Frontage: 490 missing values 
+frontage_by_hood <- Ames %>% 
+  dplyr::select(neighborhood, lot.frontage) %>% 
+  group_by(neighborhood) %>% 
+  summarise(median_frontage = median(lot.frontage, na.rm = TRUE))
+## drop the three observations of GrnHill and Landmark (missing values for every property)
+Ames <- Ames %>% 
+  filter(neighborhood != "GrnHill" & neighborhood != "Landmrk")
+# drop from frontage Ames as well
+frontage_by_hood <- frontage_by_hood %>% 
+  filter(neighborhood != "GrnHill" & neighborhood != "Landmrk")
+# redefine index for missing frontage data
+index <- which(is.na(Ames$lot.frontage))
+# impuation for missing data
+for (i in index) {
+  med_frontage = frontage_by_hood[frontage_by_hood$neighborhood == Ames$neighborhood[i], 'median_frontage']
+  Ames[i, 'lot.frontage'] = as.integer(med_frontage)
+}
+# check to see that it worked
+# any(is.na(Ames$lot.frontage))
+
+
+##Bathroom related 
+# Impute missing values
+Ames$bsmt.full.bath[which(is.na(Ames$bsmt.full.bath))] <- 0
+Ames$bsmt.half.bath[which(is.na(Ames$bsmt.half.bath))] <- 0
+
+##Fireplaces 
+index.fire <- which(is.na(Ames$fireplace.qu))
+Ames[index.fire, 'fireplace.qu'] <- 'No Fireplace'
+
+##Garages 
+index.garage.type <- which(is.na(Ames$garage.type))
+Ames[index.garage.type, 'garage.type'] <- 'None'
+index.garage.finish <- which(is.na(Ames$garage.finish))
+Ames[index.garage.finish, 'garage.finish'] <- 'None'
+index.garage.qual <- which(is.na(Ames$garage.qual))
+Ames[index.garage.qual, 'garage.qual'] <- 'None'
+
+index.garage.cond <- which(is.na(Ames$garage.cond))
+Ames[index.garage.cond, 'garage.cond'] <- 'None'
+
+#Imputation of yr.blt 
+index <- which(is.na(Ames$garage.yr.blt))
+Ames[index, 'garage.yr.blt'] <- 0
+
+
+#Drop one observation with missing garage information 
+Ames <-Ames[-2215,]
+
+## misc.features and misc.val 
+index <- which(is.na(Ames$misc.feature))
+Ames[index, 'misc.feature'] <- 'No Feature'
+
+## fence
+index <- which(is.na(Ames$fence))
+Ames[index, 'fence'] <- 'No Fence'
+
+## electrical 
+index <- which(is.na(Ames$electrical))
+Ames[index, 'electrical'] <- "SBrkr"
+
+##remove outliers of the sale prices 
+
+outlierMinMax <- quantile(Ames$saleprice, c(.01, .99))
+Ames <- Ames[ Ames$saleprice > outlierMinMax[1] & Ames$saleprice < outlierMinMax[2],  ]
+
+## delete two yeat-related variables
+
+Ames <- Ames %>% select(-c("year.built", "year.remod/add"))
+
+## condition 1 and 2 are both proximity measures, only keep one.
+Ames <- Ames %>% select(-condition.2)
+
+## Function to regroup exterior materials
+regroup_material <- function(exterior_col) {
+  return(
+    case_when(
+      exterior_col %in% c("VinylSd", "MetalSd", "Wd Sdng") ~ "Common",
+      TRUE ~ "Other"
+    )
+  )
+}
+
+# Apply the function to both 'exterior.1st' and 'exterior.2nd' columns
+Ames$exterior.1st <- regroup_material(Ames$exterior.1st)
+Ames$exterior.2nd <- regroup_material(Ames$exterior.2nd)
+
+## Masonry veneer type
+# Regroup categories
+Ames$mas.vnr.type <- ifelse(Ames$mas.vnr.type %in% c("None", "Stone"), 
+                            Ames$mas.vnr.type, 
+                            "Other")
+
+## Sale type
+
+# Regroup categories
+Ames$sale.type <- ifelse(Ames$sale.type %in% c("WD", "CWD", "VWD"), "Warranty Deed",
+                         ifelse(Ames$sale.type %in% c("Con", "ConLw", "ConLI", "ConLD"), "Contract",
+                                "Other"))
+
+
+# Convert character columns to factors
+char_cols = names(Ames)[sapply(Ames, is.character)] # Identify character columns
+Ames[char_cols] = lapply(Ames[char_cols], factor)    # Convert to factors
+
+## recheck if there are any missing values
+na.cols = which(colSums(is.na(Ames)) > 0)
+na.cols
+# double check to see if fixed all missing data
+any(is.na(Ames))
+
+endObs <- dim(Ames)[1]
+endVars <- dim(Ames)[2]
+
+cat("Data Cleaning Summary:\n")
+cat("-----------------------\n")
+cat("Before Cleaning:\n")
+cat("  Observations: ", startObs, "\n")
+cat("  Variables   : ", startVars, "\n")
+cat("\nAfter Cleaning:\n")
+cat("  Observations: ", endObs, "\n")
+cat("  Variables   : ", endVars, "\n")
+cat("\nMissing Data Check:\n")
+
+# Display columns that still have missing data, if any
+if (length(na.cols) > 0) {
+  cat("  Columns with missing data: ", toString(names(Ames)[na.cols]), "\n")
+} else {
+  cat("  No columns with missing data.\n")
+}
+
+### data spliting 
+
+library(caret)
+# Set seed
+set.seed(40)
+# create partition for train data
+train_index <- createDataPartition(y = Ames$saleprice, p = 0.8, list = FALSE)
+# index train and test data
+train <- Ames[train_index, ]
+test <- Ames[-train_index, ]
+
+```
+
+
+2. Start with an OLS model with all potential predictors.
+```{r}
+fit1 <- lm(saleprice ~ ., data = train)
+
+# Display model summary
+#summary(fit1)
+
+##CV
+cv_fit1 <- train(
+  form = saleprice ~ ., 
+  data = train, 
+  method = "lm",
+  trControl = trainControl(method = "cv", number = 10)
+)
+cv_fit1
+
+rsquared = 0.8209231
+n = 2274
+k = 76
+
+# Calculate adjusted R-squared
+adjusted_rsquared_fit1 = 1 - (((1 - rsquared) * (n - 1)) / (n - k - 1))
+
+# prediction and model assessment 
+pred.fit1 <- predict(fit1,newdata = test)
+mspe.fit1 <- mean((test$saleprice-pred.fit1)^2)
+print(paste("MSPE for the model with all predictors: ", mspe.fit1))
+```
+## This linear model suffers from multicollinearity, where one or more predictor variables in the model can be linearly predicted from the others. This makes it difficult to identify the individual effect of each predictor on the response variable.##
+
+3. Apply stepwise variable selection method and find optimal models.
+```{r}
+# Build a null model (intercept only)
+null_fit <- lm(saleprice ~ 1, data = train)
+
+# Build the full OLS model with all other variables as predictors
+full_fit <- lm(saleprice ~ ., data = train)
+
+# Perform stepwise variable selection between the null and full models
+fit_step <- step(null_fit, scope = list(lower = null_fit, upper = full_fit), direction = "both", trace = 0)
+
+#summary(fit_step)
+
+cv_step<- train(
+  form=as.formula(fit_step$call),
+  data=train,
+  method="lm",
+  trControl = trainControl(method = "cv", number = 10)
+)
+cv_step
+
+
+rsquared = 0.8358281
+n = 2274
+k = 40
+
+# Calculate adjusted R-squared
+adjusted_rsquared_step = 1 - (((1 - rsquared) * (n - 1)) / (n - k - 1))
+
+# Prediction using the stepwise model on the test set
+pred.fit_step <- predict(fit_step, newdata = test)
+
+# Calculate MSPE for fit_step
+mspe.fit_step <- mean((test$saleprice - pred.fit_step)^2)
+
+# Print the MSPE value
+print(paste("MSPE for the Stepwise Model: ", mspe.fit_step))
+
+
+```
+4. Apply LASSO variable selection method and find optimal models.
+```{r}
+library(glmnet)
+
+Y <- train$saleprice
+# conflict of "select" function, thus specifying the package 
+# ID information is usually not a predictor
+X <- dplyr::select(train, -saleprice)
+
+#start with the dataset (x) and then do more action like mutate
+X_std <- X %>% mutate(across(where(is.numeric), scale))
+#or X_std <- mutate(x,across(where(is.numeric), scale))
+#design matrix to create dummy variables for categorical data
+Xmat <- model.matrix(~., X_std)
+Xmat <- Xmat[,-1] #We do not need the first column (intercept).
+
+## Fitting lasso model (training data)
+lasso.fit<- glmnet(x=Xmat, y=Y)
+# solution path
+plot(lasso.fit, xvar = "lambda")
+
+## CV to find the optimal lambda
+cv.lasso<- cv.glmnet(x=Xmat, y=Y)
+plot(cv.lasso)
+
+# coef.lambda1<- coef(cv.lasso, s=cv.lasso$lambda.min)
+# coef.lambda2<- coef(cv.lasso, s=cv.lasso$lambda.1se)
+
+## get names of selected variables
+# varnames1 <- rownames(coef.lambda1)[as.vector(coef.lambda1)!=0][-1]
+# varnames2 <- rownames(coef.lambda2)[as.vector(coef.lambda2)!=0][-1]
+
+# cv.lasso$lambda.min
+# cv.lasso$lambda.1se
+
+# ## MSE 
+# lambda.ind <- cv.lasso$index
+# cv.lasso$cvm[lambda.ind]
+
+## I prefer the more parsimonious model, lamb1se
+optimal_lambda <- cv.lasso$lambda.1se
+
+## Model Assessment for lamb1se 
+cvm <- cv.lasso$cvm[cv.lasso$lambda == optimal_lambda]
+rmse_1se <- sqrt(cvm)
+mae_1se <- cv.lasso$cvm[cv.lasso$lambda == cv.lasso$lambda.1se]
+
+# adjusted R square
+lasso.pred <- predict(cv.lasso, newx = Xmat, s = cv.lasso$lambda.1se)
+lasso.r2 <- 1 - (sum((Y - as.vector(lasso.pred))^2) / sum((Y - mean(Y))^2))
+
+# n is the number of observations, k is the number of non-zero coefficients
+n <- nrow(Xmat)
+k <- sum(coef(cv.lasso, s = cv.lasso$lambda.1se) != 0) - 1  
+# subtracting 1 to exclude the intercept
+
+# Calculate adjusted R-squared
+lasso.adjusted.r2 <- 1 - ((1 - lasso.r2) * (n - 1) / (n - k - 1))
+
+# Print the result
+print(paste("Adjusted R-squared for Lasso model: ", lasso.adjusted.r2))
+
+print(paste("Optimal lambda (1se): ", optimal_lambda))
+print(paste("RMSE for this lambda: ", rmse_1se))
+
+
+### Prediction 
+testY <- test$saleprice
+# create a standardized testing sample 
+X_test <- dplyr::select(test, -saleprice)
+X_test_std <- X_test %>% mutate(across(where(is.numeric), scale))
+Xmat_test <- model.matrix(~., X_test_std)
+Xmat_test <- Xmat_test[, -1]
+
+# Make predictions on the testing data using the optimal lambda
+pred.lab1se <-  as.vector(predict(cv.lasso, s = cv.lasso$lambda.1se, newx = Xmat_test))
+
+##MSPE 
+mspe.lab1se <- mean((testY-pred.lab1se)^2)
+# Print the MSPE
+print(paste("MSPE for model with lambda.1se: ", mspe.lab1se))
+
+```
+5. Compare all different candidate models with respect to (1) selected variables and how they influence the housing price; (2) prediction accuracy, e.g., CV scores.
+```{r}
+num_vars_fit1 <- length(coefficients(fit1)) - 1  # subtract 1 for the intercept
+num_vars_fit_step <- length(coefficients(fit_step)) - 1  # subtract 1 for the intercept
+lasso_coef <- coef(cv.lasso, s = cv.lasso$lambda.1se)
+num_vars_lasso <- sum(lasso_coef != 0) - 1  # subtract 1 for the intercept
+
+
+rmse_fit1 <- cv_fit1$results$RMSE
+rmse_step <- cv_step$results$RMSE
+
+comparison_table <- data.frame(
+  Model = c("All predictors", "Stepwise", "Lasso"),
+  Num_Selected_Variables = c(num_vars_fit1, num_vars_fit_step, num_vars_lasso),
+  RMSE = c(rmse_fit1, rmse_step, rmse_1se),
+  R_Squared = c(adjusted_rsquared_fit1, adjusted_rsquared_step,lasso.adjusted.r2), 
+  MSPE = c(mspe.fit1, mspe.fit_step, mspe.lab1se)
+)
+
+print(comparison_table)
+
+```
+
+
